@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.pm.PackageInfoCompat
 import com.shinyanemoto.talktrace.data.RecordingItem
+import com.shinyanemoto.talktrace.telephony.TalkTraceCallState
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -73,7 +74,11 @@ private enum class Screen {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TalkTraceApp(viewModel: MainViewModel) {
+fun TalkTraceApp(
+    viewModel: MainViewModel,
+    startRecordingFromTile: Boolean = false,
+    onTileLaunchHandled: () -> Unit = {},
+) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var currentScreen by rememberSaveable { mutableStateOf(Screen.Home) }
@@ -81,11 +86,24 @@ fun TalkTraceApp(viewModel: MainViewModel) {
         contract = ActivityResultContracts.RequestMultiplePermissions(),
         onResult = viewModel::onPermissionsResult,
     )
+    val phoneStatePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = viewModel::onPhoneStatePermissionResult,
+    )
 
     LaunchedEffect(uiState.statusMessage) {
         val message = uiState.statusMessage ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(message)
         viewModel.clearStatusMessage()
+    }
+
+    LaunchedEffect(startRecordingFromTile) {
+        if (!startRecordingFromTile) {
+            return@LaunchedEffect
+        }
+        viewModel.showStatusMessage("クイック設定から録音を開始しました。")
+        viewModel.startRecording()
+        onTileLaunchHandled()
     }
 
     Scaffold(
@@ -120,6 +138,9 @@ fun TalkTraceApp(viewModel: MainViewModel) {
                 onStopRecording = viewModel::stopRecording,
                 onRequestPermission = {
                     permissionLauncher.launch(requiredPermissions())
+                },
+                onRequestPhoneStatePermission = {
+                    phoneStatePermissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
                 },
                 onRequestAddTile = {
                     requestTileAddition(
@@ -156,6 +177,7 @@ private fun HomeScreen(
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit,
     onRequestPermission: () -> Unit,
+    onRequestPhoneStatePermission: () -> Unit,
     onRequestAddTile: (Activity) -> Unit,
 ) {
     val activity = LocalContext.current.findActivity()
@@ -185,6 +207,12 @@ private fun HomeScreen(
     } else {
         false
     }
+    val showPhoneStateRationale = activity?.let {
+        ActivityCompat.shouldShowRequestPermissionRationale(
+            it,
+            Manifest.permission.READ_PHONE_STATE,
+        )
+    } ?: false
     val missingPermissionMessage = when {
         !uiState.hasAudioPermission && !uiState.hasNotificationPermission ->
             "録音開始にはマイク権限と通知権限が必要です。通知はバックグラウンド録音の停止操作に使います。"
@@ -233,6 +261,46 @@ private fun HomeScreen(
                     text = "TalkTrace はマイク入力を録音します。Android の制限上、相手側の通話音声取得は想定していません。",
                     style = MaterialTheme.typography.bodyMedium,
                 )
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            ),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "通話状態: ${uiState.callState.displayLabel}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "通常電話の待受中・着信中・通話中を検知するための表示です。",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+
+                if (uiState.callState == TalkTraceCallState.NoPermission && uiState.isTelephonySupported) {
+                    FilledTonalButton(
+                        onClick = onRequestPhoneStatePermission,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("通話状態の権限を許可")
+                    }
+
+                    Text(
+                        text = if (showPhoneStateRationale) {
+                            "READ_PHONE_STATE は通常電話の通話状態だけを検知するために使います。電話番号や通話履歴は取得しません。"
+                        } else {
+                            "通常電話の状態を検知するには権限が必要です。録音機能とは独立しており、拒否しても録音は使えます。"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
 

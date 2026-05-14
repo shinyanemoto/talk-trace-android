@@ -1,8 +1,11 @@
 package com.shinyanemoto.talktrace.recording
 
+import android.app.PendingIntent
+import android.content.Intent
 import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
+import com.shinyanemoto.talktrace.MainActivity
 
 class TalkTraceTileService : TileService() {
     override fun onStartListening() {
@@ -22,9 +25,27 @@ class TalkTraceTileService : TileService() {
         if (isRecording) {
             RecordingServiceController.stop(applicationContext)
         } else {
-            RecordingServiceController.start(applicationContext)
+            startRecordingFromTile()
         }
         updateTile(isRecording = !isRecording)
+    }
+
+    private fun startRecordingFromTile() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(MainActivity.EXTRA_START_RECORDING_FROM_TILE, true)
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                REQUEST_CODE_TILE_START,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            startActivityAndCollapse(pendingIntent)
+        } else {
+            RecordingServiceController.start(applicationContext)
+        }
     }
 
     private fun updateTile(isRecording: Boolean) {
@@ -50,5 +71,8 @@ class TalkTraceTileService : TileService() {
 
         tile.updateTile()
     }
-}
 
+    companion object {
+        private const val REQUEST_CODE_TILE_START = 3101
+    }
+}

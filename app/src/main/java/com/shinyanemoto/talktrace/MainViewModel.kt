@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Application
 import android.os.Build
 import android.content.Intent
+import android.content.pm.PackageManager.FEATURE_TELEPHONY
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -14,6 +15,8 @@ import com.shinyanemoto.talktrace.media.PlaybackController
 import com.shinyanemoto.talktrace.recording.RecordingServiceController
 import com.shinyanemoto.talktrace.recording.RecordingSessionEvent
 import com.shinyanemoto.talktrace.recording.RecordingSessionStore
+import com.shinyanemoto.talktrace.telephony.CallStateMonitor
+import com.shinyanemoto.talktrace.telephony.TalkTraceCallState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +29,9 @@ import kotlinx.coroutines.launch
 data class MainUiState(
     val hasAudioPermission: Boolean = false,
     val hasNotificationPermission: Boolean = true,
+    val hasPhoneStatePermission: Boolean = false,
+    val isTelephonySupported: Boolean = true,
+    val callState: TalkTraceCallState = TalkTraceCallState.NoPermission,
     val isRecording: Boolean = false,
     val recordingElapsedMillis: Long = 0L,
     val recordings: List<RecordingItem> = emptyList(),
@@ -36,6 +42,7 @@ data class MainUiState(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = RecordingRepository(application.applicationContext)
     private val playbackController = PlaybackController()
+    private val callStateMonitor = CallStateMonitor(application.applicationContext)
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
@@ -44,6 +51,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         observeRecordingSession()
+        observeCallState()
         refreshPermissionState()
         refreshRecordings()
     }
@@ -54,13 +62,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Manifest.permission.RECORD_AUDIO,
         ) == PackageManager.PERMISSION_GRANTED
         val hasNotificationPermission = hasNotificationPermission()
+        val hasPhoneStatePermission = ContextCompat.checkSelfPermission(
+            getApplication(),
+            Manifest.permission.READ_PHONE_STATE,
+        ) == PackageManager.PERMISSION_GRANTED
+        val isTelephonySupported = getApplication<Application>()
+            .packageManager
+            .hasSystemFeature(FEATURE_TELEPHONY)
 
         _uiState.update {
             it.copy(
                 hasAudioPermission = hasAudioPermission,
                 hasNotificationPermission = hasNotificationPermission,
+                hasPhoneStatePermission = hasPhoneStatePermission,
+                isTelephonySupported = isTelephonySupported,
+                callState = when {
+                    !isTelephonySupported -> TalkTraceCallState.Unsupported
+                    !hasPhoneStatePermission -> TalkTraceCallState.NoPermission
+                    else -> it.callState
+                },
             )
         }
+        callStateMonitor.refresh()
     }
 
     fun onPermissionsResult(grants: Map<String, Boolean>) {
@@ -183,6 +206,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(statusMessage = message) }
     }
 
+    fun onPhoneStatePermissionResult(granted: Boolean) {
+        _uiState.update {
+            it.copy(
+                hasPhoneStatePermission = granted,
+                callState = when {
+                    !it.isTelephonySupported -> TalkTraceCallState.Unsupported
+                    granted -> it.callState
+                    else -> TalkTraceCallState.NoPermission
+                },
+                statusMessage = if (granted) {
+                    "通常電話の通話状態検知を有効にしました。"
+                } else {
+                    "通話状態検知は無効です。録音機能はそのまま使えます。"
+                },
+            )
+        }
+        callStateMonitor.refresh()
+    }
+
     private fun observeRecordingSession() {
         viewModelScope.launch {
             var wasRecording = false
@@ -236,6 +278,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun observeCallState() {
+        viewModelScope.launch {
+            callStateMonitor.state.collectLatest { callState ->
+                _uiState.update { it.copy(callState = callState) }
+            }
+        }
+    }
+
     private fun startTimer(startedAtMillis: Long) {
         timerJob?.cancel()
         timerJob = viewModelScope.launch {
@@ -283,6 +333,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        callStateMonitor.stop()
         playbackController.release()
         super.onCleared()
     }

@@ -59,9 +59,8 @@ class RecordingService : Service() {
         val startedAtMillis = System.currentTimeMillis()
         val outputFile = repository.createNewRecordingFile()
         hasCompletedStopFlow = false
-        startServiceInForeground(buildNotification(startedAtMillis))
-
         runCatching {
+            startServiceInForeground(buildNotification(startedAtMillis))
             recorderManager.startRecording(outputFile)
         }.onSuccess {
             RecordingSessionStore.markRecordingStarted(
@@ -74,9 +73,10 @@ class RecordingService : Service() {
                 buildNotification(startedAtMillis),
             )
         }.onFailure {
+            recorderManager.discardRecording()
             outputFile.delete()
             RecordingSessionStore.markRecordingFailed(
-                "録音を開始できませんでした。マイクの状態を確認してください。",
+                "録音を開始できませんでした。Android の制限により、アプリを前面に出した状態で開始が必要な場合があります。",
             )
             RecordingTileSync.requestTileRefresh(this)
             stopForegroundAndService()

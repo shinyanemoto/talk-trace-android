@@ -9,14 +9,24 @@ import com.shinyanemoto.talktrace.ui.theme.TalkTraceTheme
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
+    private var shouldStartRecordingFromTile: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        shouldStartRecordingFromTile =
+            intent?.getBooleanExtra(EXTRA_START_RECORDING_FROM_TILE, false) == true
 
         setContent {
             TalkTraceTheme {
-                TalkTraceApp(viewModel = viewModel)
+                TalkTraceApp(
+                    viewModel = viewModel,
+                    startRecordingFromTile = shouldStartRecordingFromTile,
+                    onTileLaunchHandled = {
+                        shouldStartRecordingFromTile = false
+                        intent?.removeExtra(EXTRA_START_RECORDING_FROM_TILE)
+                    },
+                )
             }
         }
     }
@@ -26,5 +36,8 @@ class MainActivity : ComponentActivity() {
         viewModel.refreshPermissionState()
         viewModel.refreshRecordings()
     }
-}
 
+    companion object {
+        const val EXTRA_START_RECORDING_FROM_TILE = "start_recording_from_tile"
+    }
+}
