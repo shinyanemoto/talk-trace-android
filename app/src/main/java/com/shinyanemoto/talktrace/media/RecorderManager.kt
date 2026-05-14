@@ -6,6 +6,8 @@ import java.io.File
 class RecorderManager {
     private var mediaRecorder: MediaRecorder? = null
     private var outputFile: File? = null
+    val isRecording: Boolean
+        get() = mediaRecorder != null
 
     fun startRecording(destination: File) {
         check(mediaRecorder == null) { "Recording already in progress." }
@@ -43,6 +45,12 @@ class RecorderManager {
             }
     }
 
+    fun discardRecording() {
+        val currentOutput = outputFile
+        release()
+        currentOutput?.delete()
+    }
+
     fun release() {
         runCatching {
             mediaRecorder?.release()
@@ -51,4 +59,3 @@ class RecorderManager {
         outputFile = null
     }
 }
-

@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -56,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
+import androidx.core.content.pm.PackageInfoCompat
 import com.shinyanemoto.talktrace.data.RecordingItem
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -73,8 +75,8 @@ fun TalkTraceApp(viewModel: MainViewModel) {
     val snackbarHostState = remember { SnackbarHostState() }
     var currentScreen by rememberSaveable { mutableStateOf(Screen.Home) }
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-        onResult = viewModel::onPermissionResult,
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+        onResult = viewModel::onPermissionsResult,
     )
 
     LaunchedEffect(uiState.statusMessage) {
@@ -114,7 +116,7 @@ fun TalkTraceApp(viewModel: MainViewModel) {
                 onStartRecording = viewModel::startRecording,
                 onStopRecording = viewModel::stopRecording,
                 onRequestPermission = {
-                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    permissionLauncher.launch(requiredPermissions())
                 },
             )
 
@@ -147,12 +149,52 @@ private fun HomeScreen(
     onRequestPermission: () -> Unit,
 ) {
     val activity = LocalContext.current.findActivity()
-    val showRationale = activity?.let {
+    val context = LocalContext.current
+    val packageInfo = remember(context) {
+        context.packageManager.getPackageInfo(context.packageName, 0)
+    }
+    val versionLabel = remember(packageInfo) {
+        "Version ${packageInfo.versionName} (${PackageInfoCompat.getLongVersionCode(packageInfo)})"
+    }
+    val buildTimeLabel = remember(context) {
+        "Build ${context.getString(R.string.build_time)}"
+    }
+    val showAudioRationale = activity?.let {
         ActivityCompat.shouldShowRequestPermissionRationale(
             it,
             Manifest.permission.RECORD_AUDIO,
         )
     } ?: false
+    val showNotificationRationale = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        activity?.let {
+            ActivityCompat.shouldShowRequestPermissionRationale(
+                it,
+                Manifest.permission.POST_NOTIFICATIONS,
+            )
+        } ?: false
+    } else {
+        false
+    }
+    val missingPermissionMessage = when {
+        !uiState.hasAudioPermission && !uiState.hasNotificationPermission ->
+            "録音開始にはマイク権限と通知権限が必要です。通知はバックグラウンド録音の停止操作に使います。"
+
+        !uiState.hasAudioPermission ->
+            if (showAudioRationale) {
+                "録音を始めるにはマイク権限が必要です。自分の発話だけを保存するために利用します。"
+            } else {
+                "初回録音前にマイク権限を許可してください。許可がないと録音開始できません。"
+            }
+
+        !uiState.hasNotificationPermission ->
+            if (showNotificationRationale) {
+                "通知権限が必要です。録音中通知を表示し、通知から録音停止できるようにします。"
+            } else {
+                "バックグラウンド録音には通知権限が必要です。録音中の状態表示と停止操作に使います。"
+            }
+
+        else -> null
+    }
 
     Column(
         modifier = Modifier
@@ -199,6 +241,12 @@ private fun HomeScreen(
                 fontWeight = FontWeight.Bold,
             )
 
+            Text(
+                text = "バックグラウンドで録音中です。\n通知からも停止できます。",
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center,
+            )
+
             Button(
                 onClick = onStopRecording,
                 modifier = Modifier.fillMaxWidth(),
@@ -215,27 +263,23 @@ private fun HomeScreen(
 
             Button(
                 onClick = onStartRecording,
-                enabled = uiState.hasAudioPermission,
+                enabled = uiState.hasAudioPermission && uiState.hasNotificationPermission,
                 modifier = Modifier.fillMaxWidth(),
                 contentPadding = PaddingValues(vertical = 18.dp),
             ) {
                 Text("録音開始")
             }
 
-            if (!uiState.hasAudioPermission) {
+            if (missingPermissionMessage != null) {
                 FilledTonalButton(
                     onClick = onRequestPermission,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("マイク権限を許可")
+                    Text("必要な権限を許可")
                 }
 
                 Text(
-                    text = if (showRationale) {
-                        "録音を始めるにはマイク権限が必要です。自分の発話だけを保存するために利用します。"
-                    } else {
-                        "初回録音前にマイク権限を許可してください。許可がないと録音開始できません。"
-                    },
+                    text = missingPermissionMessage,
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center,
                 )
@@ -249,6 +293,28 @@ private fun HomeScreen(
         ) {
             Icon(imageVector = Icons.Default.FolderOpen, contentDescription = null)
             Text(" 録音一覧を見る")
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            ),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = versionLabel,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = buildTimeLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }
@@ -418,4 +484,13 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null
+}
+
+private fun requiredPermissions(): Array<String> {
+    return buildList {
+        add(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }.toTypedArray()
 }

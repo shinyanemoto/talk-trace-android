@@ -2,6 +2,7 @@ package com.shinyanemoto.talktrace
 
 import android.Manifest
 import android.app.Application
+import android.os.Build
 import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
@@ -10,17 +11,21 @@ import androidx.lifecycle.viewModelScope
 import com.shinyanemoto.talktrace.data.RecordingItem
 import com.shinyanemoto.talktrace.data.RecordingRepository
 import com.shinyanemoto.talktrace.media.PlaybackController
-import com.shinyanemoto.talktrace.media.RecorderManager
+import com.shinyanemoto.talktrace.recording.RecordingServiceController
+import com.shinyanemoto.talktrace.recording.RecordingSessionEvent
+import com.shinyanemoto.talktrace.recording.RecordingSessionStore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class MainUiState(
     val hasAudioPermission: Boolean = false,
+    val hasNotificationPermission: Boolean = true,
     val isRecording: Boolean = false,
     val recordingElapsedMillis: Long = 0L,
     val recordings: List<RecordingItem> = emptyList(),
@@ -30,90 +35,84 @@ data class MainUiState(
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = RecordingRepository(application.applicationContext)
-    private val recorderManager = RecorderManager()
     private val playbackController = PlaybackController()
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     private var timerJob: Job? = null
-    private var recordingStartedAtMillis: Long? = null
 
     init {
+        observeRecordingSession()
         refreshPermissionState()
         refreshRecordings()
     }
 
     fun refreshPermissionState() {
-        val granted = ContextCompat.checkSelfPermission(
+        val hasAudioPermission = ContextCompat.checkSelfPermission(
             getApplication(),
             Manifest.permission.RECORD_AUDIO,
         ) == PackageManager.PERMISSION_GRANTED
+        val hasNotificationPermission = hasNotificationPermission()
 
-        _uiState.update { it.copy(hasAudioPermission = granted) }
-    }
-
-    fun onPermissionResult(granted: Boolean) {
         _uiState.update {
             it.copy(
-                hasAudioPermission = granted,
-                statusMessage = if (granted) null else "マイク権限がないため録音を開始できません。",
+                hasAudioPermission = hasAudioPermission,
+                hasNotificationPermission = hasNotificationPermission,
+            )
+        }
+    }
+
+    fun onPermissionsResult(grants: Map<String, Boolean>) {
+        val audioGranted = grants[Manifest.permission.RECORD_AUDIO] ?: _uiState.value.hasAudioPermission
+        val notificationGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            grants[Manifest.permission.POST_NOTIFICATIONS] ?: _uiState.value.hasNotificationPermission
+        } else {
+            true
+        }
+
+        _uiState.update {
+            it.copy(
+                hasAudioPermission = audioGranted,
+                hasNotificationPermission = notificationGranted,
+                statusMessage = if (audioGranted && notificationGranted) {
+                    null
+                } else {
+                    permissionMessage(audioGranted, notificationGranted)
+                },
             )
         }
     }
 
     fun startRecording() {
-        if (!_uiState.value.hasAudioPermission || _uiState.value.isRecording) {
+        val state = _uiState.value
+        if (!state.hasAudioPermission || !state.hasNotificationPermission || state.isRecording) {
+            _uiState.update {
+                it.copy(
+                    statusMessage = permissionMessage(
+                        audioGranted = state.hasAudioPermission,
+                        notificationGranted = state.hasNotificationPermission,
+                    ),
+                )
+            }
             return
         }
 
         stopPlayback()
-
-        val outputFile = repository.createNewRecordingFile()
         runCatching {
-            recorderManager.startRecording(outputFile)
-            recordingStartedAtMillis = System.currentTimeMillis()
-            _uiState.update {
-                it.copy(
-                    isRecording = true,
-                    recordingElapsedMillis = 0L,
-                    statusMessage = "録音中です。自分の声を記録しています。",
-                )
-            }
-            startTimer()
+            RecordingServiceController.start(getApplication())
         }.onFailure {
-            recorderManager.release()
-            outputFile.delete()
             _uiState.update {
-                it.copy(statusMessage = "録音を開始できませんでした。マイクの状態を確認してください。")
+                it.copy(statusMessage = "録音サービスを開始できませんでした。権限と端末設定を確認してください。")
             }
         }
     }
 
     fun stopRecording() {
-        if (!_uiState.value.isRecording) {
+        if (!RecordingSessionStore.state.value.isRecording) {
             return
         }
-
-        timerJob?.cancel()
-        timerJob = null
-
-        val savedFile = recorderManager.stopRecording()
-        recordingStartedAtMillis = null
-
-        _uiState.update {
-            it.copy(
-                isRecording = false,
-                recordingElapsedMillis = 0L,
-                statusMessage = if (savedFile != null) {
-                    "録音ファイルを保存しました。"
-                } else {
-                    "録音を保存できませんでした。短すぎる録音の可能性があります。"
-                },
-            )
-        }
-
-        refreshRecordings()
+        RecordingServiceController.stop(getApplication())
     }
 
     fun refreshRecordings() {
@@ -180,20 +179,106 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(statusMessage = null) }
     }
 
-    private fun startTimer() {
+    private fun observeRecordingSession() {
+        viewModelScope.launch {
+            var wasRecording = false
+            RecordingSessionStore.state.collectLatest { session ->
+                _uiState.update {
+                    it.copy(
+                        isRecording = session.isRecording,
+                        recordingElapsedMillis = if (session.isRecording) {
+                            session.startedAtMillis?.let(::elapsedSince) ?: 0L
+                        } else {
+                            0L
+                        },
+                    )
+                }
+
+                val startedAt = session.startedAtMillis
+                if (session.isRecording && startedAt != null) {
+                    startTimer(startedAt)
+                } else {
+                    stopTimer()
+                }
+
+                if (wasRecording && !session.isRecording) {
+                    refreshRecordings()
+                }
+                wasRecording = session.isRecording
+
+                when (val event = session.lastEvent) {
+                    is RecordingSessionEvent.Started -> {
+                        _uiState.update {
+                            it.copy(statusMessage = "録音中です。バックグラウンドでも継続します。")
+                        }
+                        RecordingSessionStore.clearEvent()
+                    }
+
+                    is RecordingSessionEvent.Saved -> {
+                        _uiState.update {
+                            it.copy(statusMessage = "録音ファイルを保存しました。")
+                        }
+                        RecordingSessionStore.clearEvent()
+                    }
+
+                    is RecordingSessionEvent.Failed -> {
+                        _uiState.update { it.copy(statusMessage = event.message) }
+                        RecordingSessionStore.clearEvent()
+                    }
+
+                    null -> Unit
+                }
+            }
+        }
+    }
+
+    private fun startTimer(startedAtMillis: Long) {
         timerJob?.cancel()
         timerJob = viewModelScope.launch {
             while (true) {
-                val startedAt = recordingStartedAtMillis ?: break
-                val elapsed = System.currentTimeMillis() - startedAt
+                val elapsed = elapsedSince(startedAtMillis)
                 _uiState.update { it.copy(recordingElapsedMillis = elapsed) }
                 delay(1_000)
             }
         }
     }
 
+    private fun stopTimer() {
+        timerJob?.cancel()
+        timerJob = null
+    }
+
+    private fun hasNotificationPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                getApplication(),
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
+    private fun permissionMessage(audioGranted: Boolean, notificationGranted: Boolean): String {
+        return when {
+            !audioGranted && !notificationGranted ->
+                "録音開始にはマイク権限と通知権限が必要です。通知はバックグラウンド録音の停止操作に使います。"
+
+            !audioGranted ->
+                "マイク権限がないため録音を開始できません。自分の発話を記録するために必要です。"
+
+            !notificationGranted ->
+                "通知権限がないためバックグラウンド録音を開始できません。録音中通知と通知からの停止操作に使います。"
+
+            else -> ""
+        }
+    }
+
+    private fun elapsedSince(startedAtMillis: Long): Long {
+        return System.currentTimeMillis() - startedAtMillis
+    }
+
     override fun onCleared() {
-        recorderManager.release()
         playbackController.release()
         super.onCleared()
     }
