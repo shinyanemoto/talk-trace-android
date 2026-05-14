@@ -179,6 +179,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(statusMessage = null) }
     }
 
+    fun showStatusMessage(message: String) {
+        _uiState.update { it.copy(statusMessage = message) }
+    }
+
     private fun observeRecordingSession() {
         viewModelScope.launch {
             var wasRecording = false

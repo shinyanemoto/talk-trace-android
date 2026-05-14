@@ -46,6 +46,7 @@ class RecordingService : Service() {
         if (!hasCompletedStopFlow && recorderManager.isRecording) {
             recorderManager.discardRecording()
             RecordingSessionStore.markRecordingFailed("録音サービスが終了したため、録音を停止しました。")
+            RecordingTileSync.requestTileRefresh(this)
         }
         super.onDestroy()
     }
@@ -67,6 +68,7 @@ class RecordingService : Service() {
                 startedAtMillis = startedAtMillis,
                 filePath = outputFile.absolutePath,
             )
+            RecordingTileSync.requestTileRefresh(this)
             notificationManager.notify(
                 NOTIFICATION_ID,
                 buildNotification(startedAtMillis),
@@ -76,6 +78,7 @@ class RecordingService : Service() {
             RecordingSessionStore.markRecordingFailed(
                 "録音を開始できませんでした。マイクの状態を確認してください。",
             )
+            RecordingTileSync.requestTileRefresh(this)
             stopForegroundAndService()
         }
     }
@@ -95,6 +98,7 @@ class RecordingService : Service() {
                 "録音を保存できませんでした。短すぎる録音の可能性があります。",
             )
         }
+        RecordingTileSync.requestTileRefresh(this)
         stopForegroundAndService()
     }
 

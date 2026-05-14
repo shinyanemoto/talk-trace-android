@@ -2,9 +2,12 @@ package com.shinyanemoto.talktrace
 
 import android.Manifest
 import android.app.Activity
+import android.app.StatusBarManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -118,6 +121,12 @@ fun TalkTraceApp(viewModel: MainViewModel) {
                 onRequestPermission = {
                     permissionLauncher.launch(requiredPermissions())
                 },
+                onRequestAddTile = {
+                    requestTileAddition(
+                        activity = it,
+                        onMessage = viewModel::showStatusMessage,
+                    )
+                },
             )
 
             Screen.Recordings -> RecordingsScreen(
@@ -147,6 +156,7 @@ private fun HomeScreen(
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit,
     onRequestPermission: () -> Unit,
+    onRequestAddTile: (Activity) -> Unit,
 ) {
     val activity = LocalContext.current.findActivity()
     val context = LocalContext.current
@@ -293,6 +303,15 @@ private fun HomeScreen(
         ) {
             Icon(imageVector = Icons.Default.FolderOpen, contentDescription = null)
             Text(" 録音一覧を見る")
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && activity != null) {
+            FilledTonalButton(
+                onClick = { onRequestAddTile(activity) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("クイック設定に追加")
+            }
         }
 
         Card(
@@ -493,4 +512,40 @@ private fun requiredPermissions(): Array<String> {
             add(Manifest.permission.POST_NOTIFICATIONS)
         }
     }.toTypedArray()
+}
+
+private fun requestTileAddition(
+    activity: Activity,
+    onMessage: (String) -> Unit,
+) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+        onMessage("この端末ではアプリ内からのタイル追加に対応していません。")
+        return
+    }
+
+    val statusBarManager = activity.getSystemService(StatusBarManager::class.java)
+    val componentName = ComponentName(activity, com.shinyanemoto.talktrace.recording.TalkTraceTileService::class.java)
+    val icon = Icon.createWithResource(activity, R.drawable.ic_tile_talktrace)
+
+    statusBarManager.requestAddTileService(
+        componentName,
+        "TalkTrace",
+        icon,
+        activity.mainExecutor,
+    ) { result ->
+        val message = when (result) {
+            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ->
+                "クイック設定に TalkTrace を追加しました。"
+
+            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED ->
+                "TalkTrace タイルはすでに追加されています。"
+
+            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED ->
+                "タイル追加はキャンセルされました。"
+
+            else ->
+                "クイック設定タイルを追加できませんでした。通知パネルの編集画面から追加を試してください。"
+        }
+        onMessage(message)
+    }
 }
