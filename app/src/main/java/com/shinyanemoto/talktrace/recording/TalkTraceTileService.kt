@@ -34,7 +34,10 @@ class TalkTraceTileService : TileService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val intent = Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra(MainActivity.EXTRA_START_RECORDING_FROM_TILE, true)
+                putExtra(
+                    MainActivity.EXTRA_AUTO_START_RECORDING_SOURCE,
+                    MainActivity.AUTO_START_SOURCE_TILE,
+                )
             }
             val pendingIntent = PendingIntent.getActivity(
                 this,

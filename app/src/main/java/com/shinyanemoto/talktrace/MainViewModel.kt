@@ -15,6 +15,8 @@ import com.shinyanemoto.talktrace.media.PlaybackController
 import com.shinyanemoto.talktrace.recording.RecordingServiceController
 import com.shinyanemoto.talktrace.recording.RecordingSessionEvent
 import com.shinyanemoto.talktrace.recording.RecordingSessionStore
+import com.shinyanemoto.talktrace.telephony.CallRecordingPromptNotificationManager
+import com.shinyanemoto.talktrace.telephony.CallRecordingPromptStore
 import com.shinyanemoto.talktrace.telephony.CallStateMonitor
 import com.shinyanemoto.talktrace.telephony.TalkTraceCallState
 import kotlinx.coroutines.Job
@@ -32,6 +34,7 @@ data class MainUiState(
     val hasPhoneStatePermission: Boolean = false,
     val isTelephonySupported: Boolean = true,
     val callState: TalkTraceCallState = TalkTraceCallState.NoPermission,
+    val isCallRecordingPromptVisible: Boolean = false,
     val isRecording: Boolean = false,
     val recordingElapsedMillis: Long = 0L,
     val recordings: List<RecordingItem> = emptyList(),
@@ -43,6 +46,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = RecordingRepository(application.applicationContext)
     private val playbackController = PlaybackController()
     private val callStateMonitor = CallStateMonitor(application.applicationContext)
+    private val callRecordingPromptNotificationManager =
+        CallRecordingPromptNotificationManager(application.applicationContext)
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
@@ -52,6 +57,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         observeRecordingSession()
         observeCallState()
+        observeCallRecordingPrompt()
         refreshPermissionState()
         refreshRecordings()
     }
@@ -84,6 +90,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         callStateMonitor.refresh()
+        syncCallRecordingPrompt()
     }
 
     fun onPermissionsResult(grants: Map<String, Boolean>) {
@@ -105,6 +112,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 },
             )
         }
+        syncCallRecordingPrompt()
     }
 
     fun startRecording() {
@@ -206,6 +214,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(statusMessage = message) }
     }
 
+    fun handleAutoStartRecording(source: String) {
+        dismissCallRecordingPrompt()
+        val message = when (source) {
+            MainActivity.AUTO_START_SOURCE_TILE -> "クイック設定から録音を開始しました。"
+            MainActivity.AUTO_START_SOURCE_CALL_PROMPT -> "通話中の通知から録音を開始しました。"
+            else -> null
+        }
+        if (message != null) {
+            showStatusMessage(message)
+        }
+        startRecording()
+    }
+
     fun onPhoneStatePermissionResult(granted: Boolean) {
         _uiState.update {
             it.copy(
@@ -223,6 +244,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         callStateMonitor.refresh()
+        syncCallRecordingPrompt()
     }
 
     private fun observeRecordingSession() {
@@ -251,6 +273,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     refreshRecordings()
                 }
                 wasRecording = session.isRecording
+                syncCallRecordingPrompt(isRecording = session.isRecording)
 
                 when (val event = session.lastEvent) {
                     is RecordingSessionEvent.Started -> {
@@ -282,6 +305,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             callStateMonitor.state.collectLatest { callState ->
                 _uiState.update { it.copy(callState = callState) }
+                syncCallRecordingPrompt(callState = callState)
+            }
+        }
+    }
+
+    private fun observeCallRecordingPrompt() {
+        viewModelScope.launch {
+            CallRecordingPromptStore.isVisible.collectLatest { isVisible ->
+                _uiState.update { it.copy(isCallRecordingPromptVisible = isVisible) }
             }
         }
     }
@@ -300,6 +332,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun stopTimer() {
         timerJob?.cancel()
         timerJob = null
+    }
+
+    private fun syncCallRecordingPrompt(
+        callState: TalkTraceCallState = _uiState.value.callState,
+        isRecording: Boolean = _uiState.value.isRecording,
+    ) {
+        val uiState = _uiState.value
+        val shouldShowPrompt = uiState.isTelephonySupported &&
+            uiState.hasPhoneStatePermission &&
+            uiState.hasNotificationPermission &&
+            !isRecording &&
+            callState == TalkTraceCallState.Offhook
+
+        if (shouldShowPrompt) {
+            callRecordingPromptNotificationManager.show()
+        } else {
+            dismissCallRecordingPrompt()
+        }
+    }
+
+    private fun dismissCallRecordingPrompt() {
+        callRecordingPromptNotificationManager.dismiss()
     }
 
     private fun hasNotificationPermission(): Boolean {
@@ -333,6 +387,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        dismissCallRecordingPrompt()
         callStateMonitor.stop()
         playbackController.release()
         super.onCleared()

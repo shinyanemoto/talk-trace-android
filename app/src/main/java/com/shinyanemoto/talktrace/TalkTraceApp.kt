@@ -76,8 +76,8 @@ private enum class Screen {
 @Composable
 fun TalkTraceApp(
     viewModel: MainViewModel,
-    startRecordingFromTile: Boolean = false,
-    onTileLaunchHandled: () -> Unit = {},
+    pendingAutoStartRecordingSource: String? = null,
+    onAutoStartHandled: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -97,13 +97,20 @@ fun TalkTraceApp(
         viewModel.clearStatusMessage()
     }
 
-    LaunchedEffect(startRecordingFromTile) {
-        if (!startRecordingFromTile) {
-            return@LaunchedEffect
+    LaunchedEffect(pendingAutoStartRecordingSource) {
+        val source = pendingAutoStartRecordingSource ?: return@LaunchedEffect
+        viewModel.handleAutoStartRecording(source)
+        onAutoStartHandled()
+    }
+
+    LaunchedEffect(uiState.callState, uiState.hasPhoneStatePermission, uiState.hasNotificationPermission) {
+        if (
+            uiState.callState == TalkTraceCallState.Offhook &&
+            uiState.hasPhoneStatePermission &&
+            !uiState.hasNotificationPermission
+        ) {
+            viewModel.showStatusMessage("通話中ですが、通知権限がないため録音開始の提案通知を表示できません。")
         }
-        viewModel.showStatusMessage("クイック設定から録音を開始しました。")
-        viewModel.startRecording()
-        onTileLaunchHandled()
     }
 
     Scaffold(
@@ -226,12 +233,18 @@ private fun HomeScreen(
 
         !uiState.hasNotificationPermission ->
             if (showNotificationRationale) {
-                "通知権限が必要です。録音中通知を表示し、通知から録音停止できるようにします。"
+                "通知権限が必要です。録音中通知と通話中の録音提案通知を表示します。"
             } else {
-                "バックグラウンド録音には通知権限が必要です。録音中の状態表示と停止操作に使います。"
+                "バックグラウンド録音や通話中の録音提案には通知権限が必要です。"
             }
 
         else -> null
+    }
+    val callPromptStatusLabel = when {
+        !uiState.hasPhoneStatePermission -> "無効"
+        !uiState.hasNotificationPermission -> "通知権限なし"
+        uiState.isCallRecordingPromptVisible -> "表示中"
+        else -> "非表示"
     }
 
     Column(
@@ -280,7 +293,11 @@ private fun HomeScreen(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "通常電話の待受中・着信中・通話中を検知するための表示です。",
+                    text = "録音提案通知: $callPromptStatusLabel",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = "通常電話の待受中・着信中・通話中を検知し、通話中は録音開始を提案します。",
                     style = MaterialTheme.typography.bodyMedium,
                 )
 
