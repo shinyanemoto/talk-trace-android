@@ -105,11 +105,12 @@ fun TalkTraceApp(
 
     LaunchedEffect(uiState.callState, uiState.hasPhoneStatePermission, uiState.hasNotificationPermission) {
         if (
-            uiState.callState == TalkTraceCallState.Offhook &&
+            (uiState.callState == TalkTraceCallState.Ringing || uiState.callState == TalkTraceCallState.Offhook) &&
             uiState.hasPhoneStatePermission &&
             !uiState.hasNotificationPermission
         ) {
-            viewModel.showStatusMessage("通話中ですが、通知権限がないため録音開始の提案通知を表示できません。")
+            val stateLabel = if (uiState.callState == TalkTraceCallState.Ringing) "着信中" else "通話中"
+            viewModel.showStatusMessage("$stateLabel ですが、通知権限がないため録音開始の提案通知を表示できません。")
         }
     }
 

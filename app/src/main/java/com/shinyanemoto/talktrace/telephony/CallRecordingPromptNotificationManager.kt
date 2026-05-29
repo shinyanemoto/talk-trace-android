@@ -20,12 +20,12 @@ class CallRecordingPromptNotificationManager(context: Context) {
         createNotificationChannel()
     }
 
-    fun show() {
+    fun show(callState: TalkTraceCallState) {
         if (CallRecordingPromptStore.isVisible.value) {
             return
         }
 
-        notificationManager.notify(NOTIFICATION_ID, buildNotification())
+        notificationManager.notify(NOTIFICATION_ID, buildNotification(callState))
         CallRecordingPromptStore.setVisible(true)
     }
 
@@ -38,7 +38,7 @@ class CallRecordingPromptNotificationManager(context: Context) {
         CallRecordingPromptStore.setVisible(false)
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(callState: TalkTraceCallState): Notification {
         val openAppIntent = Intent(appContext, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -60,10 +60,16 @@ class CallRecordingPromptNotificationManager(context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
+        val contentText = when (callState) {
+            TalkTraceCallState.Ringing -> "着信中です。自分の声を記録できます。"
+            TalkTraceCallState.Offhook -> "通話中です。自分の声を記録できます。"
+            else -> "自分の声を記録できます。"
+        }
+
         return NotificationCompat.Builder(appContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(appContext.getString(R.string.app_name))
-            .setContentText("通話中です。自分の声を記録できます。")
+            .setContentText(contentText)
             .setContentIntent(openAppPendingIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -98,4 +104,3 @@ class CallRecordingPromptNotificationManager(context: Context) {
         private const val REQUEST_CODE_START_RECORDING = 2102
     }
 }
-

@@ -18,8 +18,8 @@ android {
         applicationId = "com.shinyanemoto.talktrace"
         minSdk = 24
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.3.2"
+        versionCode = 8
+        versionName = "1.3.3"
         resValue("string", "build_time", buildTimestamp)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

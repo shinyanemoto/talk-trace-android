@@ -343,10 +343,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             uiState.hasPhoneStatePermission &&
             uiState.hasNotificationPermission &&
             !isRecording &&
-            callState == TalkTraceCallState.Offhook
+            (callState == TalkTraceCallState.Ringing || callState == TalkTraceCallState.Offhook)
 
         if (shouldShowPrompt) {
-            callRecordingPromptNotificationManager.show()
+            callRecordingPromptNotificationManager.show(callState)
         } else {
             dismissCallRecordingPrompt()
         }
