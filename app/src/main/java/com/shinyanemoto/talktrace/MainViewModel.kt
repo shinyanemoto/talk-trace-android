@@ -218,7 +218,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dismissCallRecordingPrompt()
         val message = when (source) {
             MainActivity.AUTO_START_SOURCE_TILE -> "クイック設定から録音を開始しました。"
-            MainActivity.AUTO_START_SOURCE_CALL_PROMPT -> "通話中の通知から録音を開始しました。"
+            MainActivity.AUTO_START_SOURCE_CALL_PROMPT -> "録音提案通知から録音を開始しました。"
             else -> null
         }
         if (message != null) {
