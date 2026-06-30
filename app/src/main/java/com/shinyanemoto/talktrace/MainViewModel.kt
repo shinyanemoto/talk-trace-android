@@ -338,17 +338,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         callState: TalkTraceCallState = _uiState.value.callState,
         isRecording: Boolean = _uiState.value.isRecording,
     ) {
+        when (callState) {
+            TalkTraceCallState.Ringing -> showCallRecordingPromptIfAvailable(
+                callState = TalkTraceCallState.Ringing,
+                isRecording = isRecording,
+            )
+
+            TalkTraceCallState.Offhook -> showCallRecordingPromptIfAvailable(
+                callState = TalkTraceCallState.Offhook,
+                isRecording = isRecording,
+            )
+
+            TalkTraceCallState.Idle -> dismissCallRecordingPrompt()
+            TalkTraceCallState.NoPermission,
+            TalkTraceCallState.Unsupported -> Unit
+        }
+    }
+
+    private fun showCallRecordingPromptIfAvailable(
+        callState: TalkTraceCallState,
+        isRecording: Boolean,
+    ) {
         val uiState = _uiState.value
-        val shouldShowPrompt = uiState.isTelephonySupported &&
+        val canShowPrompt = uiState.isTelephonySupported &&
             uiState.hasPhoneStatePermission &&
             uiState.hasNotificationPermission &&
-            !isRecording &&
-            (callState == TalkTraceCallState.Ringing || callState == TalkTraceCallState.Offhook)
+            !isRecording
 
-        if (shouldShowPrompt) {
+        if (canShowPrompt) {
             callRecordingPromptNotificationManager.show(callState)
-        } else {
-            dismissCallRecordingPrompt()
         }
     }
 
